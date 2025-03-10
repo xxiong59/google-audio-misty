@@ -37,7 +37,9 @@ import {
   ToolResponseMessage,
   type LiveConfig,
 } from "../multimodal-live-types";
-import { blobToJSON, base64ToArrayBuffer } from "./utils";
+import { blobToJSON, base64ToArrayBuffer, arrayBufferToBase64} from "./utils";
+import {getMistyInstance} from "../misty/MistyProvider"
+import { AudioRecorder } from "../lib/audio-recorder";
 
 /**
  * the events that this client will emit
@@ -53,6 +55,8 @@ interface MultimodalLiveClientEventTypes {
   turncomplete: () => void;
   toolcall: (toolCall: ToolCall) => void;
   toolcallcancellation: (toolcallCancellation: ToolCallCancellation) => void;
+  audiopause: () => void;
+  audioresume: () => void;
 }
 
 export type MultimodalLiveAPIClientConnection = {
@@ -69,9 +73,14 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
   public ws: WebSocket | null = null;
   protected config: LiveConfig | null = null;
   public url: string = "";
+  private currentAudioBuffer: string[] = []; // Store base64 chunks for the current turn
+  private currentTimestamp: number = Date.now(); // Initialize with current timestamp
+  private misty = getMistyInstance("");
   public getConfig() {
     return { ...this.config };
   }
+
+  
 
   constructor({ url, apiKey }: MultimodalLiveAPIClientConnection) {
     super();
@@ -104,6 +113,7 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
         console.log("non blob message", evt);
       }
     });
+    this.misty?.registerAudioCallback(this.resumeAudio)
     return new Promise((resolve, reject) => {
       const onError = (ev: Event) => {
         this.disconnect(ws);
@@ -166,6 +176,10 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
     return false;
   }
 
+  private resumeAudio() {
+    this.emit("audioresume")
+  }
+
   protected async receive(blob: Blob) {
     const response: LiveIncomingMessage = (await blobToJSON(
       blob,
@@ -197,9 +211,53 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
         return;
       }
       if (isTurnComplete(serverContent)) {
-        this.log("server.send", "turnComplete");
+        console.log("server.send", "turnComplete");
         this.emit("turncomplete");
         //plausible theres more to the message, continue
+
+        if (this.currentAudioBuffer.length > 0) {
+          const combinedBase64 = this.currentAudioBuffer.join('');
+          const timestamp = Date.now();
+          const filename = `a_xxiong59_test_${timestamp}.wav`;
+          
+          const byteCharacters = atob(combinedBase64);
+          const pcmData = new Uint8Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            pcmData[i] = byteCharacters.charCodeAt(i);
+          }
+          
+          // 转换为WAV文件
+          const wavData = this.createWavFromPcm(pcmData);
+
+          const wavBase64 = arrayBufferToBase64(wavData.buffer);
+
+          await this.misty?.uploadAudio(wavBase64, filename)
+          await this.misty?.playAudio(filename)
+          this.emit("audiopause")
+          
+          // // 创建并下载文件
+          // const blob = new Blob([wavData], { type: 'audio/wav' });
+          // const url = URL.createObjectURL(blob);
+          // const filename = `xxiong59_test_${this.currentTimestamp}.wav`;
+          
+          // const a = document.createElement('a');
+          // a.href = url;
+          // a.download = filename;
+          // document.body.appendChild(a);
+          // a.click();
+          
+          // // 清理
+          // setTimeout(() => {
+          //   document.body.removeChild(a);
+          //   URL.revokeObjectURL(url);
+          // }, 100);
+          
+          // this.log(`audio.save`, `保存音频: ${filename}`);
+          
+          // Reset for next turn
+          this.currentAudioBuffer = [];
+          this.currentTimestamp = Date.now();
+        }
       }
 
       if (isModelTurn(serverContent)) {
@@ -217,11 +275,17 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
 
         base64s.forEach((b64) => {
           if (b64) {
+            this.currentAudioBuffer.push(b64);
             const data = base64ToArrayBuffer(b64);
-            this.emit("audio", data);
-            this.log(`server.audio`, `buffer (${data.byteLength})`);
+            // this.emit("audio", data);
+            // this.log(`server.audio`, `buffer (${data.byteLength})`);
           }
         });
+        // const combinedBase64 = base64s.join('');
+        // const timestamp = Date.now();
+        // const filename = `xxiong59_test_${timestamp}.mp3`;
+        // await this.misty?.uploadAudio(combinedBase64, filename)
+        // await this.misty?.playAudio(filename)
         if (!otherParts.length) {
           return;
         }
@@ -229,13 +293,77 @@ export class MultimodalLiveClient extends EventEmitter<MultimodalLiveClientEvent
         parts = otherParts;
 
         const content: ModelTurn = { modelTurn: { parts } };
-        this.emit("content", content);
-        this.log(`server.content`, response);
+        // this.emit("content", content);
+        // this.log(`server.content`, response);
       }
     } else {
       console.log("received unmatched message", response);
     }
   }
+
+
+  
+  private sampleRate = 24000;  // 采样率（Hz）
+  private numChannels = 1;     // 单声道
+  private bitsPerSample = 16;  // 位深度
+
+// 简化的WAV头创建函数
+    createWavFromPcm(pcmData: Uint8Array) {
+      // WAV文件头的大小是44字节
+      const wavHeader = new ArrayBuffer(44);
+      const view = new DataView(wavHeader);
+      
+      // "RIFF"标识
+      view.setUint8(0, 'R'.charCodeAt(0));
+      view.setUint8(1, 'I'.charCodeAt(0));
+      view.setUint8(2, 'F'.charCodeAt(0));
+      view.setUint8(3, 'F'.charCodeAt(0));
+      
+      // 文件大小
+      view.setUint32(4, 36 + pcmData.length, true);
+      
+      // "WAVE"标识
+      view.setUint8(8, 'W'.charCodeAt(0));
+      view.setUint8(9, 'A'.charCodeAt(0));
+      view.setUint8(10, 'V'.charCodeAt(0));
+      view.setUint8(11, 'E'.charCodeAt(0));
+      
+      // "fmt "子块
+      view.setUint8(12, 'f'.charCodeAt(0));
+      view.setUint8(13, 'm'.charCodeAt(0));
+      view.setUint8(14, 't'.charCodeAt(0));
+      view.setUint8(15, ' '.charCodeAt(0));
+      
+      view.setUint32(16, 16, true);  // fmt块大小
+      view.setUint16(20, 1, true);   // 音频格式（PCM = 1）
+      view.setUint16(22, this.numChannels, true);  // 通道数
+      view.setUint32(24, this.sampleRate, true);   // 采样率
+      
+      // 字节率 = 采样率 * 通道数 * 每样本字节数
+      const byteRate = this.sampleRate * this.numChannels * (this.bitsPerSample / 8);
+      view.setUint32(28, byteRate, true);
+      
+      // 块对齐 = 通道数 * 每样本字节数
+      const blockAlign = this.numChannels * (this.bitsPerSample / 8);
+      view.setUint16(32, blockAlign, true);
+      
+      view.setUint16(34, this.bitsPerSample, true);  // 样本位数
+      
+      // "data"子块
+      view.setUint8(36, 'd'.charCodeAt(0));
+      view.setUint8(37, 'a'.charCodeAt(0));
+      view.setUint8(38, 't'.charCodeAt(0));
+      view.setUint8(39, 'a'.charCodeAt(0));
+      
+      view.setUint32(40, pcmData.length, true);  // 数据长度
+      
+      // 合并头部和PCM数据
+      const wavFile = new Uint8Array(wavHeader.byteLength + pcmData.length);
+      wavFile.set(new Uint8Array(wavHeader), 0);
+      wavFile.set(pcmData, wavHeader.byteLength);
+      
+      return wavFile;
+    }
 
   /**
    * send realtimeInput, this is base64 chunks of "audio/pcm" and/or "image/jpg"

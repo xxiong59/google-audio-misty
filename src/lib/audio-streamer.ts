@@ -19,6 +19,8 @@ import {
   registeredWorklets,
 } from "./audioworklet-registry";
 
+import {getMistyInstance} from "../misty/MistyProvider"
+
 export class AudioStreamer {
   public audioQueue: Float32Array[] = [];
   private isPlaying: boolean = false;
@@ -32,6 +34,15 @@ export class AudioStreamer {
   private checkInterval: number | null = null;
   private initialBufferTime: number = 0.1; //0.1 // 100ms initial buffer
   private endOfQueueAudioSource: AudioBufferSourceNode | null = null;
+
+  // private misty = getMistyInstance("10.134.71.231");
+  // private isCollectingAudio = false; // 是否正在收集音频
+  // private completeAudioBuffer = new Float32Array(0); // 存储完整句子的缓冲区
+  // private silenceThreshold = 0.01; // 静音检测阈值
+  // private silenceFrames = 0; // 连续静音帧计数
+  // private silenceFramesThreshold = 30; // 判定为句子结束的静音帧数量（约1.25秒，基于24kHz采样率和缓冲区大小）
+  // private sentenceMaxDuration = 10; // 最大句子长度（秒）
+  // private sentenceStartTime = 0; // 句子开始时间
 
   public onComplete = () => {};
 
@@ -96,6 +107,14 @@ export class AudioStreamer {
     newBuffer.set(this.processingBuffer);
     newBuffer.set(float32Array, this.processingBuffer.length);
     this.processingBuffer = newBuffer;
+
+    // this.detectSentenceEnd(float32Array);
+
+    // // 检查最大句子长度
+    // if (Date.now() - this.sentenceStartTime > this.sentenceMaxDuration * 1000) {
+    //   console.log("达到最大句子长度，处理当前音频");
+    //   this.processSentence();
+    // }
 
     while (this.processingBuffer.length >= this.bufferSize) {
       const buffer = this.processingBuffer.slice(0, this.bufferSize);
@@ -253,6 +272,109 @@ export class AudioStreamer {
       this.onComplete();
     }
   }
+
+  // startCollecting() {
+  //   this.isCollectingAudio = true;
+  //   this.completeAudioBuffer = new Float32Array(0);
+  //   this.silenceFrames = 0;
+  //   this.sentenceStartTime = Date.now();
+  //   console.log("开始收集音频数据");
+  // }
+  
+  // // 停止收集并处理已收集的数据
+  // stopCollecting() {
+  //   this.isCollectingAudio = false;
+  //   this.processSentence();
+  // }
+
+  // private detectSentenceEnd(buffer: Float32Array) {
+  //   // 计算当前缓冲区的平均能量
+  //   let energy = 0;
+  //   for (let i = 0; i < buffer.length; i++) {
+  //     energy += Math.abs(buffer[i]);
+  //   }
+  //   energy /= buffer.length;
+    
+  //   // 如果能量低于阈值，增加静音帧计数
+  //   if (energy < this.silenceThreshold) {
+  //     this.silenceFrames++;
+      
+  //     // 如果连续静音帧数量达到阈值，认为句子结束
+  //     if (this.silenceFrames >= this.silenceFramesThreshold) {
+  //       console.log("检测到句子结束（静音）");
+  //       this.processSentence();
+  //     }
+  //   } else {
+  //     // 重置静音帧计数
+  //     this.silenceFrames = 0;
+  //   }
+  // }
+
+  // private processSentence() {
+  //   if (!this.isCollectingAudio || this.completeAudioBuffer.length === 0) return;
+    
+  //   console.log(`处理完整句子，长度: ${this.completeAudioBuffer.length} 样本`);
+    
+  //   // 转换Float32Array到适合Misty的格式（PCM16）
+  //   const pcm16Data = this.float32ToPCM16(this.completeAudioBuffer);
+    
+  //   // 转换为Base64编码
+  //   const base64Data = this.arrayBufferToBase64(pcm16Data);
+    
+  //   // 生成唯一文件名
+  //   const timestamp = Date.now();
+  //   const filename = `xxiong59_test_${timestamp}.mp3`;
+    
+  //   // 上传到Misty并播放
+  //   this.uploadToMisty(base64Data, filename);
+    
+  //   // 重置状态，准备下一个句子
+  //   this.startCollecting();
+  // }
+
+  // private float32ToPCM16(float32Array: Float32Array): ArrayBuffer {
+  //   const pcm16 = new Int16Array(float32Array.length);
+    
+  //   for (let i = 0; i < float32Array.length; i++) {
+  //     // 将-1.0到1.0的值转换为-32768到32767的整数
+  //     const sample = Math.max(-1, Math.min(1, float32Array[i]));
+  //     pcm16[i] = Math.round(sample * 32767);
+  //   }
+    
+  //   return pcm16.buffer;
+  // }
+  
+  // // 将ArrayBuffer转换为Base64字符串
+  // private arrayBufferToBase64(buffer: ArrayBuffer): string {
+  //   const bytes = new Uint8Array(buffer);
+  //   let binary = '';
+    
+  //   for (let i = 0; i < bytes.byteLength; i++) {
+  //     binary += String.fromCharCode(bytes[i]);
+  //   }
+    
+  //   return window.btoa(binary);
+  // }
+
+  // private async uploadToMisty(base64Data: string, filename: string) {
+  //   console.log(`上传音频到Misty: ${filename}`);
+    
+  //   // 使用队列或Promise链避免并发上传问题
+  //   // const timestamp = Date.now();
+  //   await this.misty?.uploadAudio(base64Data, filename)
+  //   await this.misty?.playAudio(filename)
+  // }
+
+  // private handleStreamComplete() {
+  //   console.log("音频流结束");
+    
+  //   // 如果还在收集状态且有数据，处理最后一个句子
+  //   if (this.isCollectingAudio && this.completeAudioBuffer.length > 0) {
+  //     this.processSentence();
+  //   }
+    
+  //   this.isCollectingAudio = false;
+  // }
 }
 
 // // Usage example:
@@ -268,3 +390,5 @@ export class AudioStreamer {
 //
 // // To stop playing
 // // audioStreamer.stop();
+
+

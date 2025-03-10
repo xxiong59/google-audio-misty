@@ -76,16 +76,30 @@ export function useLiveAPI({
     const onAudio = (data: ArrayBuffer) =>
       audioStreamerRef.current?.addPCM16(new Uint8Array(data));
 
+    const pauseAudio = () => {
+      console.log("pauseAudio")
+      audioStreamerRef.current?.stop()
+    }
+
+    const resumeAudio = () => {
+      console.log("resumeAudio")
+      audioStreamerRef.current?.resume()
+    }
+
     client
       .on("close", onClose)
       .on("interrupted", stopAudioStreamer)
-      .on("audio", onAudio);
+      .on("audio", onAudio)
+      .on("audiopause", pauseAudio)
+      .on("audioresume", resumeAudio);
 
     return () => {
       client
         .off("close", onClose)
         .off("interrupted", stopAudioStreamer)
-        .off("audio", onAudio);
+        .off("audio", onAudio)
+        .off("audiopause", pauseAudio)
+        .off("audioresume", resumeAudio);
     };
   }, [client]);
 

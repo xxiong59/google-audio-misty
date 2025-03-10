@@ -24,6 +24,7 @@ import { useWebcam } from "../../hooks/use-webcam";
 import { AudioRecorder } from "../../lib/audio-recorder";
 import AudioPulse from "../audio-pulse/AudioPulse";
 import "./control-tray.scss";
+import {getMistyInstance} from "../../misty/MistyProvider"
 
 export type ControlTrayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -71,10 +72,10 @@ function ControlTray({
   const [muted, setMuted] = useState(false);
   const renderCanvasRef = useRef<HTMLCanvasElement>(null);
   const connectButtonRef = useRef<HTMLButtonElement>(null);
-
+  const misty = getMistyInstance("");
   const { client, connected, connect, disconnect, volume } =
     useLiveAPIContext();
-
+  
   useEffect(() => {
     if (!connected && connectButtonRef.current) {
       connectButtonRef.current.focus();
@@ -101,46 +102,49 @@ function ControlTray({
     } else {
       audioRecorder.stop();
     }
+    const timer = setTimeout(() => {
+      testProcessVideoFrame()
+  }, 2000);
     return () => {
       audioRecorder.off("data", onData).off("volume", setInVolume);
     };
   }, [connected, client, muted, audioRecorder]);
 
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.srcObject = activeVideoStream;
-    }
+  // useEffect(() => {
+  //   if (videoRef.current) {
+  //     videoRef.current.srcObject = activeVideoStream;
+  //   }
 
-    let timeoutId = -1;
+  //   let timeoutId = -1;
 
-    function sendVideoFrame() {
-      const video = videoRef.current;
-      const canvas = renderCanvasRef.current;
+  //   function sendVideoFrame() {
+  //     const video = videoRef.current;
+  //     const canvas = renderCanvasRef.current;
 
-      if (!video || !canvas) {
-        return;
-      }
+  //     if (!video || !canvas) {
+  //       return;
+  //     }
 
-      const ctx = canvas.getContext("2d")!;
-      canvas.width = video.videoWidth * 0.25;
-      canvas.height = video.videoHeight * 0.25;
-      if (canvas.width + canvas.height > 0) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        const base64 = canvas.toDataURL("image/jpeg", 1.0);
-        const data = base64.slice(base64.indexOf(",") + 1, Infinity);
-        client.sendRealtimeInput([{ mimeType: "image/jpeg", data }]);
-      }
-      if (connected) {
-        timeoutId = window.setTimeout(sendVideoFrame, 1000 / 0.5);
-      }
-    }
-    if (connected && activeVideoStream !== null) {
-      requestAnimationFrame(sendVideoFrame);
-    }
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [connected, activeVideoStream, client, videoRef]);
+  //     const ctx = canvas.getContext("2d")!;
+  //     canvas.width = video.videoWidth * 0.25;
+  //     canvas.height = video.videoHeight * 0.25;
+  //     if (canvas.width + canvas.height > 0) {
+  //       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+  //       const base64 = canvas.toDataURL("image/jpeg", 1.0);
+  //       const data = base64.slice(base64.indexOf(",") + 1, Infinity);
+  //       client.sendRealtimeInput([{ mimeType: "image/jpeg", data }]);
+  //     }
+  //     if (connected) {
+  //       timeoutId = window.setTimeout(sendVideoFrame, 1000 / 0.5);
+  //     }
+  //   }
+  //   if (connected && activeVideoStream !== null) {
+  //     requestAnimationFrame(sendVideoFrame);
+  //   }
+  //   return () => {
+  //     clearTimeout(timeoutId);
+  //   };
+  // }, [connected, activeVideoStream, client, videoRef]);
 
   //handler for swapping from one video-stream to the next
   const changeStreams = (next?: UseMediaStreamResult) => async () => {
@@ -152,9 +156,105 @@ function ControlTray({
       setActiveVideoStream(null);
       onVideoStreamChange(null);
     }
-
+    misty?.startVedioStreaming(processVideoFrame)
+    const timer = setTimeout(() => {
+      misty?.stopVideoStreaming();
+    }, 2000);
     videoStreams.filter((msr) => msr !== next).forEach((msr) => msr.stop());
   };
+
+  function setAudioRecord(on: boolean) {
+    setMuted(on)
+  }
+
+  function processVideoFrame(data: any) {
+    const canvas = renderCanvasRef.current;
+    if (canvas == null) {
+      return;
+    }
+    const ctx = canvas?.getContext("2d")!;
+    // Create a temporary image to load the frame
+    const img = new Image();
+    
+    // When the image loads, draw it on the canvas
+    img.onload = () => {
+      // Set canvas dimensions if needed
+      if (canvas.width !== img.width || canvas.height !== img.height) {
+        canvas.width = img.width;
+        canvas.height = img.height;
+      }
+      
+      // Draw the image on the canvas
+      ctx.drawImage(img, 0, 0);
+    };
+    
+    // Set the image source based on data type
+    if (typeof data === 'string') {
+      try {
+        // Try to parse as JSON containing base64 image data
+        const jsonData = JSON.parse(data);
+        if (jsonData && jsonData.base64) {
+          img.src = `data:image/jpeg;base64,${jsonData.base64}`;
+        }
+      } catch (jsonError) {
+        // Not valid JSON, ignore
+      }
+    } else if (data instanceof Blob) {
+      // Handle binary data as image blob
+      img.src = URL.createObjectURL(data);
+      
+      // Clean up the URL object after the image loads
+      img.onload = function() {
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(img.src);
+      };
+    }
+  }
+
+  // 模拟测试函数
+function testProcessVideoFrame() {
+  // 创建一个简单的测试图像（一个红色的方块）
+  const canvas = renderCanvasRef.current;
+    if (canvas == null) {
+      return;
+    }
+  canvas.width = 320;
+  canvas.height = 240;
+  const ctx = canvas.getContext('2d');
+  
+  if (ctx) {
+    // 填充红色背景
+    ctx.fillStyle = 'red';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // 添加一些文本，确保我们能看见
+    ctx.fillStyle = 'white';
+    ctx.font = '24px Arial';
+    ctx.fillText('Test Frame', 100, 120);
+    
+    // 转换为base64
+    const base64Data = canvas.toDataURL('image/jpeg').split(',')[1];
+    
+    // 创建模拟的JSON数据（模拟Misty发送的数据格式）
+    const mockJsonData = JSON.stringify({ base64: base64Data });
+    
+    // 调用处理函数
+    console.log("Testing processVideoFrame with mock JSON data");
+    processVideoFrame(mockJsonData);
+    
+    // // 也可以测试Blob格式
+    // canvas.toBlob((blob) => {
+    //   if (blob) {
+    //     console.log("Testing processVideoFrame with mock Blob data");
+    //     processVideoFrame(blob);
+    //   }
+    // }, 'image/jpeg');
+  }
+}
+
+// 在组件挂载后或需要测试时调用
+// 例如，可以添加一个测试按钮:
+// <button onClick={testProcessVideoFrame}>Test with Mock Data</button>
 
   return (
     <section className="control-tray">
